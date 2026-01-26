@@ -1,0 +1,4 @@
+# Muddler build artifacts
+*.mpackage
+*.output
+build/

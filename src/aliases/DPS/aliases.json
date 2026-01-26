@@ -1,0 +1,50 @@
+[
+  {
+    "name": "dps help",
+    "isActive": "yes",
+    "regex": "^dps(?:\\s+help)?$",
+    "script": ""
+  },
+  {
+    "name": "dps delete",
+    "isActive": "yes",
+    "regex": "^dps\\s+delete\\s+(\\w+)$",
+    "script": ""
+  },
+  {
+    "name": "dps rename",
+    "isActive": "yes",
+    "regex": "^dps\\s+rename\\s+(\\w+)\\s+(\\w+)$",
+    "script": ""
+  },
+  {
+    "name": "dps start",
+    "isActive": "yes",
+    "regex": "^dps\\s+start\\s+(\\w+)$",
+    "script": ""
+  },
+  {
+    "name": "dps stop",
+    "isActive": "yes",
+    "regex": "^dps\\s+stop$",
+    "script": ""
+  },
+  {
+    "name": "dps report",
+    "isActive": "yes",
+    "regex": "^dps\\s+report(?:\\s+(\\w+))?$",
+    "script": ""
+  },
+  {
+    "name": "dps compare",
+    "isActive": "yes",
+    "regex": "^dps\\s+compare$",
+    "script": ""
+  },
+  {
+    "name": "dps setname",
+    "isActive": "yes",
+    "regex": "^dps\\s+setname\\s+(\\w+)$",
+    "script": ""
+  }
+]

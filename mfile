@@ -1,0 +1,7 @@
+{
+  "package": "dpstest",
+  "title": "Mudlet DPS Tracker",
+  "version": "0.1.0",
+  "author": "keneanung",
+  "outputFile": true
+}

@@ -1,0 +1,47 @@
+[
+  {
+    "name": "DPSDamage",
+    "isActive": "yes",
+    "isFolder": "no",
+    "patterns": [
+      { "pattern": "^Damage dealt: (\\d+)(?: \\(([^)]+)\\))?", "type": "regex" }
+    ],
+    "script": ""
+  },
+  {
+    "name": "DPSCritGeneral",
+    "isActive": "yes",
+    "isFolder": "no",
+    "patterns": [
+      { "pattern": "^You have scored a[n]? (.*) CRITICAL hit!", "type": "regex" }
+    ],
+    "script": ""
+  },
+  {
+    "name": "DPSLogoutStop",
+    "isActive": "yes",
+    "isFolder": "no",
+    "patterns": [
+      { "pattern": "^You grow still.*out of the land\\.$", "type": "regex" }
+    ],
+    "script": ""
+  },
+  {
+    "name": "DPSRegainBalanceStop",
+    "isActive": "yes",
+    "isFolder": "no",
+    "patterns": [
+      { "pattern": "^You have recovered balance on all limbs\\.\\[Bal\\]", "type": "regex" }
+    ],
+    "script": ""
+  },
+  {
+    "name": "DPSRegainEquilibriumStop",
+    "isActive": "yes",
+    "isFolder": "no",
+    "patterns": [
+      { "pattern": "^You have recovered equilibrium\\.\\[Eq\\]", "type": "regex" }
+    ],
+    "script": ""
+  }
+]
