@@ -1,3 +1,5 @@
+-- enable coverage if available
+pcall(require, "luacov")
 -- Minimal Mudlet environment mocks for testing
 
 -- controllable clock

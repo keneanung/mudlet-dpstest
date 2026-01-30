@@ -39,7 +39,11 @@ local function json_decode(str)
 end
 
 function DPS.init()
-  DPS.strategies = DPS.strategies or {}
+  DPS.enemies = DPS.enemies or {}
+  DPS.lastNSessions = DPS.lastNSessions or 10
+  DPS.entitiesById = DPS.entitiesById or {}
+  DPS.currentTarget = { id = nil, name = nil, cleared = false, ts = nil }
+  DPS.recentClearedTarget = { id = nil, name = nil, expires = 0 }
   DPS.current = nil
   DPS.nextCritType = nil
   DPS.strategyLabel = DPS.strategyLabel or "auto"
@@ -55,6 +59,21 @@ function DPS.init()
   -- load persisted data if available
   DPS.load()
   cecho("<green>DPS tracker ready. Use 'dps start <name>' and 'dps stop'.\n")
+
+  -- Register GMCP handlers using named registration only
+  local regNamed = registerNamedEventHandler
+  if type(regNamed) == "function" then
+    local user = "DPS"
+    local function reg(handlerName, eventName, fn)
+      local ok = pcall(regNamed, user, handlerName, eventName, fn)
+      if ok then table.insert(DPS._handlers, handlerName) end
+    end
+    reg("GMCPCharItemsList", "gmcp.Char.Items.List", DPS.onGMCPCharItemsList)
+    reg("GMCPCharItemsAdd", "gmcp.Char.Items.Add", DPS.onGMCPCharItemsAdd)
+    reg("GMCPCharItemsRemove", "gmcp.Char.Items.Remove", DPS.onGMCPCharItemsRemove)
+    reg("GMCPCharItemsUpdate", "gmcp.Char.Items.Update", DPS.onGMCPCharItemsUpdate)
+    reg("GMCPTarget", "gmcp.IRE.Target", DPS.onGMCPTarget)
+  end
 end
 
 function DPS.start(name)
@@ -69,6 +88,7 @@ function DPS.start(name)
   DPS.current = {
     name = name,
     start = now(),
+    enemyName = nil,
     damage = 0,
     rawDamage = 0,
     hits = 0,
@@ -76,8 +96,10 @@ function DPS.start(name)
     critTypes = {},
     typeHits = {},
     typeDamage = {},
+    typeRawDamage = {},
     activeStart = now(),
-    activeTime = 0
+    activeTime = 0,
+    seg = { enemyName = nil, damage = 0, rawDamage = 0, hits = 0, critHits = 0, critTypes = {}, typeHits = {}, typeDamage = {}, typeRawDamage = {}, activeStart = now(), activeTime = 0 }
   }
   cecho(string.format("<cyan>DPS: Started '%s'.\n", name))
 end
@@ -92,24 +114,21 @@ function DPS.stop()
   -- accumulate any active segment
   local duration = cur.activeTime + (cur.activeStart and (now() - cur.activeStart) or 0)
   duration = math.max(0, math.floor(duration))
-  local strat = DPS.strategies[cur.name] or { totalDamage = 0, totalRawDamage = 0, totalTime = 0, critHits = 0, critTypes = {}, typeHits = {}, typeDamage = {} }
-  strat.totalDamage = strat.totalDamage + (cur.damage or 0)
-  strat.totalRawDamage = strat.totalRawDamage + (cur.rawDamage or cur.damage or 0)
-  strat.totalTime = strat.totalTime + duration
-  strat.critHits = strat.critHits + (cur.critHits or 0)
-  for k,v in pairs(cur.critTypes or {}) do
-    strat.critTypes[k] = (strat.critTypes[k] or 0) + v
-  end
-  for k,v in pairs(cur.typeHits or {}) do
-    strat.typeHits[k] = (strat.typeHits[k] or 0) + v
-  end
-  for k,v in pairs(cur.typeDamage or {}) do
-    strat.typeDamage[k] = (strat.typeDamage[k] or 0) + v
-  end
-  DPS.strategies[cur.name] = strat
   local dps = duration > 0 and ((cur.damage or 0) / duration) or 0
   local rawdps = duration > 0 and ((cur.rawDamage or 0) / duration) or 0
   cecho(string.format("<green>DPS: '%s' session %ds, %d dmg (%d raw), %d hits (%d crits), %.1f dps / %.1f raw dps.\n", cur.name, duration, cur.damage or 0, cur.rawDamage or 0, cur.hits or 0, cur.critHits or 0, dps, rawdps))
+
+  -- Attribute encounter to enemyName + strategy (local optimization store)
+  if cur.seg then
+    local s = cur.seg
+    local sdur = s.activeTime + (s.activeStart and (now() - s.activeStart) or 0)
+    sdur = math.max(0, math.floor(sdur))
+    if (s.hits or 0) > 0 or (s.damage or 0) > 0 then
+      s.name = cur.name
+      DPS._recordEncounter(s, sdur)
+    end
+  end
+
   DPS.current = nil
   DPS.save()
 end
@@ -117,128 +136,384 @@ end
 function DPS.addDamage(amount, dtype)
   if not DPS.current then return end
   local a = tonumber(amount) or 0
+  -- Resolve target name snapshot on every hit to segment per enemy
+  local snap = DPS.resolveTargetNameSnapshot()
+  if not snap and DPS.recentClearedTarget and DPS.recentClearedTarget.id then
+    snap = DPS.entitiesById[tostring(DPS.recentClearedTarget.id)]
+  end
+  local cur = DPS.current
+  -- initialize segment enemy name if unknown, prefer explicit current.enemyName if set
+  if cur.seg and not cur.seg.enemyName then
+    cur.seg.enemyName = snap or cur.enemyName or "unknown"
+    cur.enemyName = cur.seg.enemyName
+  elseif cur.seg and snap and snap ~= cur.seg.enemyName then
+    -- close previous segment and start a new one
+    local s = cur.seg
+    local sdur = s.activeTime + (s.activeStart and (now() - s.activeStart) or 0)
+    sdur = math.max(0, math.floor(sdur))
+    if (s.hits or 0) > 0 or (s.damage or 0) > 0 then
+      s.name = cur.name
+      DPS._recordEncounter(s, sdur)
+    end
+    -- start new segment for new target
+    cur.seg = { enemyName = snap, damage = 0, rawDamage = 0, hits = 0, critHits = 0, critTypes = {}, typeHits = {}, typeDamage = {}, typeRawDamage = {}, activeStart = now(), activeTime = 0 }
+    cur.enemyName = cur.seg.enemyName
+  end
   DPS.current.damage = (DPS.current.damage or 0) + a
   DPS.current.hits = (DPS.current.hits or 0) + 1
   if not DPS.current.activeStart then
     DPS.current.activeStart = now()
   end
-  if dtype and dtype ~= "" then
-    local key = string.lower(tostring(dtype))
-    DPS.current.typeHits[key] = (DPS.current.typeHits[key] or 0) + 1
-    DPS.current.typeDamage[key] = (DPS.current.typeDamage[key] or 0) + a
-  end
+  local baseForRaw = a
   if DPS.nextCritType then
     DPS.current.critHits = (DPS.current.critHits or 0) + 1
     DPS.current.critTypes[DPS.nextCritType] = (DPS.current.critTypes[DPS.nextCritType] or 0) + 1
     local key = string.upper(DPS.nextCritType)
     local mult = DPS.critMultipliers[key] or 1
     local base = mult > 0 and (a / mult) or a
+    baseForRaw = base
     DPS.current.rawDamage = (DPS.current.rawDamage or 0) + base
+    if cur.seg then
+      cur.seg.critHits = (cur.seg.critHits or 0) + 1
+      cur.seg.critTypes[DPS.nextCritType] = (cur.seg.critTypes[DPS.nextCritType] or 0) + 1
+      cur.seg.rawDamage = (cur.seg.rawDamage or 0) + base
+    end
     DPS.nextCritType = nil
   else
     DPS.current.rawDamage = (DPS.current.rawDamage or 0) + a
+    if cur.seg then
+      cur.seg.rawDamage = (cur.seg.rawDamage or 0) + a
+    end
+  end
+  if dtype and dtype ~= "" then
+    local key = string.lower(tostring(dtype))
+    DPS.current.typeHits[key] = (DPS.current.typeHits[key] or 0) + 1
+    DPS.current.typeDamage[key] = (DPS.current.typeDamage[key] or 0) + a
+    DPS.current.typeRawDamage[key] = (DPS.current.typeRawDamage[key] or 0) + baseForRaw
+    if cur.seg then
+      cur.seg.typeHits[key] = (cur.seg.typeHits[key] or 0) + 1
+      cur.seg.typeDamage[key] = (cur.seg.typeDamage[key] or 0) + a
+      cur.seg.typeRawDamage[key] = (cur.seg.typeRawDamage[key] or 0) + baseForRaw
+    end
+  end
+  if cur.seg then
+    cur.seg.damage = (cur.seg.damage or 0) + a
+    cur.seg.hits = (cur.seg.hits or 0) + 1
+    if not cur.seg.activeStart then
+      cur.seg.activeStart = now()
+    end
   end
 end
 
-function DPS.report(name)
-  if name and name ~= "" then
-    local strat = DPS.strategies[name]
-    if not strat then
-      cecho(string.format("<yellow>DPS: No data for '%s'.\n", name))
-      return
+-- Local optimization store: per enemy name + strategy totals and last-N buffer
+function DPS._recordEncounter(cur, duration)
+  local enemy = cur.enemyName or "unknown"
+  local stratName = cur.name
+  DPS.enemies[enemy] = DPS.enemies[enemy] or { strategies = {} }
+  local E = DPS.enemies[enemy].strategies
+  E[stratName] = E[stratName] or { totals = { damage = 0, rawDamage = 0, time = 0, hits = 0, critHits = 0, typeDamage = {} }, recent = {} }
+  local entry = {
+    damage = cur.damage or 0,
+    rawDamage = cur.rawDamage or (cur.damage or 0),
+    time = duration or 0,
+    hits = cur.hits or 0,
+    critHits = cur.critHits or 0,
+    typeDamage = cur.typeDamage or {},
+    typeRawDamage = cur.typeRawDamage or {},
+  }
+  -- push to recent buffer
+  table.insert(E[stratName].recent, entry)
+  -- roll oldest into totals if buffer exceeds N
+  local N = DPS.lastNSessions or 10
+  while #E[stratName].recent > N do
+    local old = table.remove(E[stratName].recent, 1)
+    local T = E[stratName].totals
+    T.damage = (T.damage or 0) + (old.damage or 0)
+    T.rawDamage = (T.rawDamage or 0) + (old.rawDamage or (old.damage or 0))
+    T.time = (T.time or 0) + (old.time or 0)
+    T.hits = (T.hits or 0) + (old.hits or 0)
+    T.critHits = (T.critHits or 0) + (old.critHits or 0)
+    for k,v in pairs(old.typeDamage or {}) do
+      T.typeDamage[k] = (T.typeDamage[k] or 0) + v
     end
-    local dps = strat.totalTime > 0 and (strat.totalDamage / strat.totalTime) or 0
-    local rawdps = strat.totalTime > 0 and (strat.totalRawDamage / strat.totalTime) or 0
-    cecho(string.format("<cyan>DPS Report: '%s'\n", name))
-    cecho(string.format("<white>- Totals: %d dmg (%d raw) over %ds\n", strat.totalDamage, strat.totalRawDamage, strat.totalTime))
-    cecho(string.format("<white>- Rates: %.1f dps / %.1f raw dps\n", dps, rawdps))
-    if (strat.critHits or 0) > 0 then
-      local critParts = {}
-      for k,v in pairs(strat.critTypes or {}) do
-        table.insert(critParts, string.format("%s:%d", k, v))
-      end
-      table.sort(critParts)
-      cecho(string.format("<white>- Crits: %d (%s)\n", strat.critHits or 0, table.concat(critParts, ", ")))
-    else
-      cecho("<white>- Crits: 0\n")
+    T.typeRawDamage = T.typeRawDamage or {}
+    for k,v in pairs(old.typeRawDamage or {}) do
+      T.typeRawDamage[k] = (T.typeRawDamage[k] or 0) + v
     end
-    local hadTypes = false
-    local tlist = {}
-    for k,h in pairs(strat.typeHits or {}) do
-      hadTypes = true
-      local dmg = (strat.typeDamage and strat.typeDamage[k]) or 0
-      table.insert(tlist, { k = k, hits = h, dmg = dmg })
-    end
-    if hadTypes then
-      table.sort(tlist, function(a,b) return a.dmg > b.dmg end)
-      cecho("<white>- Types:\n")
-      for _, it in ipairs(tlist) do
-        cecho(string.format("<white>  %s: %d hits (%d dmg)\n", it.k, it.hits, it.dmg))
-      end
-    end
-  else
-    DPS.compare()
   end
 end
 
-function DPS.compare()
+-- Compute last-N mean DPS and totals DPS for an enemy+strategy
+function DPS._enemyStrategyStats(enemy, stratName)
+  local e = DPS.enemies[enemy]
+  if not e then return nil end
+  local s = e.strategies[stratName]
+  if not s then return nil end
+  local recentDamage, recentRawDamage, recentTime = 0, 0, 0
+  local recentHits, recentCritHits = 0, 0
+  local recentTypeDamage = {}
+  local recentTypeRawDamage = {}
+  for _, r in ipairs(s.recent) do
+    recentDamage = recentDamage + (r.damage or 0)
+    recentRawDamage = recentRawDamage + (r.rawDamage or (r.damage or 0))
+    recentTime = recentTime + (r.time or 0)
+    recentHits = recentHits + (r.hits or 0)
+    recentCritHits = recentCritHits + (r.critHits or 0)
+    for k, v in pairs(r.typeDamage or {}) do
+      recentTypeDamage[k] = (recentTypeDamage[k] or 0) + v
+    end
+    for k, v in pairs(r.typeRawDamage or {}) do
+      recentTypeRawDamage[k] = (recentTypeRawDamage[k] or 0) + v
+    end
+  end
+  local totals = s.totals
+  local lastNdps = recentTime > 0 and (recentDamage / recentTime) or 0
+  local lastNrawDps = recentTime > 0 and (recentRawDamage / recentTime) or 0
+  local totalsDps = (totals.time or 0) > 0 and ((totals.damage or 0) / (totals.time or 1)) or 0
+  local totalsRawDps = (totals.time or 0) > 0 and ((totals.rawDamage or 0) / (totals.time or 1)) or 0
+  return {
+    recentCount = #s.recent,
+    recentDps = lastNdps,
+    totalsDps = totalsDps,
+    recentRawDps = lastNrawDps,
+    totalsRawDps = totalsRawDps,
+    recentDamage = recentDamage,
+    recentRawDamage = recentRawDamage,
+    recentTime = recentTime,
+    recentHits = recentHits,
+    recentCritHits = recentCritHits,
+    recentTypeDamage = recentTypeDamage,
+    recentTypeRawDamage = recentTypeRawDamage,
+    totalsDamage = totals.damage or 0,
+    totalsRawDamage = totals.rawDamage or 0,
+    totalsTime = totals.time or 0,
+    totalsHits = totals.hits or 0,
+    totalsCritHits = totals.critHits or 0,
+    totalsTypeDamage = totals.typeDamage or {},
+    totalsTypeRawDamage = totals.typeRawDamage or {},
+  }
+end
+
+function DPS.localReport(enemyName)
+  local enemy = enemyName or (DPS.current and DPS.current.enemyName) or "unknown"
+  local e = DPS.enemies[enemy]
+  if not e or not e.strategies then
+    cecho(string.format("<yellow>DPS: No local data for '%s'.\n", enemy))
+    return {}
+  end
+  cecho(string.format("<cyan>DPS Local: '%s'\n", enemy))
   local list = {}
-  for k, v in pairs(DPS.strategies) do
-    local dps = v.totalTime > 0 and (v.totalDamage / v.totalTime) or 0
-    local rawdps = v.totalTime > 0 and (v.totalRawDamage / v.totalTime) or 0
-    table.insert(list, { name = k, dps = dps, rawdps = rawdps, damage = v.totalDamage, rawDamage = v.totalRawDamage, time = v.totalTime })
+  for stratName, _ in pairs(e.strategies) do
+    local st = DPS._enemyStrategyStats(enemy, stratName)
+    table.insert(list, {
+      name = stratName,
+      recentDps = st.recentDps,
+      totalsDps = st.totalsDps,
+      recentRawDps = st.recentRawDps,
+      totalsRawDps = st.totalsRawDps,
+      recentTime = st.recentTime,
+      recentDamage = st.recentDamage,
+      totalsDamage = st.totalsDamage,
+      totalsTime = st.totalsTime,
+      recentCount = st.recentCount,
+      recentHits = st.recentHits,
+      recentCritHits = st.recentCritHits,
+      totalsHits = st.totalsHits,
+      totalsCritHits = st.totalsCritHits,
+      recentTypeDamage = st.recentTypeDamage,
+      totalsTypeDamage = st.totalsTypeDamage,
+      recentTypeRawDamage = st.recentTypeRawDamage,
+      totalsTypeRawDamage = st.totalsTypeRawDamage,
+    })
   end
-  table.sort(list, function(a, b) return a.rawdps > b.rawdps end)
-  cecho("<cyan>DPS: Comparison:\n")
-  for i, it in ipairs(list) do
-    cecho(string.format("<white>%2d. %-16s %.1f raw dps / %.1f dps (%d raw / %d dmg / %ds)\n", i, it.name, it.rawdps, it.dps, it.rawDamage or 0, it.damage, it.time))
+  table.sort(list, function(a,b) return a.recentRawDps > b.recentRawDps end)
+  for _, it in ipairs(list) do
+    cecho(string.format("<white>%-16s last-%d: %.1f dps (%.1f raw) | totals: %.1f dps (%.1f raw)\n", it.name, it.recentCount, it.recentDps, it.recentRawDps, it.totalsDps, it.totalsRawDps))
+    cecho(string.format("<white>  recent: hits %d (crit %d) | totals: hits %d (crit %d)\n", it.recentHits or 0, it.recentCritHits or 0, it.totalsHits or 0, it.totalsCritHits or 0))
+    local function printTypesRawDps(label, dmgTbl, time)
+      local parts = {}
+      if (time or 0) > 0 then
+        for k, v in pairs(dmgTbl or {}) do table.insert(parts, string.format("%s: %.1f", k, (v or 0) / time)) end
+      end
+      table.sort(parts)
+      if #parts > 0 then
+        cecho(string.format("<white>  %s: %s\n", label, table.concat(parts, ", ")))
+      end
+    end
+    printTypesRawDps("recent types (raw dps)", it.recentTypeRawDamage, it.recentTime)
+    printTypesRawDps("totals types (raw dps)", it.totalsTypeRawDamage, it.totalsTime)
+  end
+  return list
+end
+
+-- List all enemies with recorded local data
+function DPS.listEnemies()
+  local result = {}
+  local enemies = DPS.enemies or {}
+  for name, data in pairs(enemies) do
+    local s = data.strategies or {}
+    local count = 0
+    for _ in pairs(s) do count = count + 1 end
+    table.insert(result, { name = name, strategies = count })
+  end
+  table.sort(result, function(a,b) return a.name < b.name end)
+  if #result == 0 then
+    cecho("<yellow>DPS: No enemies recorded yet.\n")
+    return result
+  end
+  cecho("<cyan>DPS Enemies:\n")
+  for _, it in ipairs(result) do
+    cecho(string.format("<white>%-24s strategies: %d\n", it.name, it.strategies))
+  end
+  return result
+end
+
+-- Comparison overview: show recent/total DPS per enemy for a strategy
+function DPS.overview(stratName)
+  local strat = (stratName and stratName ~= "") and stratName or (DPS.strategyLabel or "auto")
+  local enemies = DPS.enemies or {}
+  local list = {}
+  for enemy, data in pairs(enemies) do
+    local s = data.strategies and data.strategies[strat]
+    if s then
+      local st = DPS._enemyStrategyStats(enemy, strat)
+      if st then
+        table.insert(list, {
+          enemy = enemy,
+          recentDps = st.recentRawDps,
+          totalsDps = st.totalsRawDps,
+          recentCount = st.recentCount,
+        })
+      end
+    end
+  end
+  table.sort(list, function(a,b)
+    if a.recentDps == b.recentDps then return a.enemy < b.enemy end
+    return a.recentDps < b.recentDps
+  end)
+  if #list == 0 then
+    cecho(string.format("<yellow>DPS: No overview data for strategy '%s'.\n", strat))
+    return list
+  end
+  cecho(string.format("<cyan>DPS Overview for '%s' (lower = likely resistance; raw dps)\n", strat))
+  for _, it in ipairs(list) do
+    cecho(string.format("<white>%-24s last-%d: %.1f raw dps | totals: %.1f raw dps\n", it.enemy, it.recentCount, it.recentDps, it.totalsDps))
+  end
+  return list
+end
+
+function DPS.resetLocal(enemyName, stratName)
+  local enemy = enemyName or (DPS.current and DPS.current.enemyName)
+  if not enemy or not DPS.enemies[enemy] then return end
+  if stratName then
+    DPS.enemies[enemy].strategies[stratName] = nil
+  else
+    DPS.enemies[enemy] = nil
+  end
+  cecho(string.format("<green>DPS: Reset local data for '%s'%s.\n", enemy, stratName and ("/"..stratName) or ""))
+  DPS.save()
+end
+
+function DPS.setLastN(n)
+  local v = tonumber(n)
+  if v and v > 0 then
+    DPS.lastNSessions = v
+    cecho(string.format("<cyan>DPS: last-N sessions set to %d.\n", v))
+    DPS.save()
   end
 end
+
+-- GMCP integration
+local function gmcpTable(path)
+  local ok, tbl = pcall(function()
+    local parts = {}
+    for p in string.gmatch(path, "[^.]+") do table.insert(parts, p) end
+    local t = gmcp
+    for _, k in ipairs(parts) do t = t and t[k] end
+    return t
+  end)
+  if ok then return tbl end
+  return nil
+end
+
+function DPS.onGMCPCharItemsList()
+  local data = gmcpTable("Char.Items.List")
+  if type(data) ~= "table" or type(data.items) ~= "table" then return end
+  DPS.entitiesById = {}
+  for _, item in ipairs(data.items) do
+    if item.id and item.name then DPS.entitiesById[tostring(item.id)] = item.name end
+  end
+end
+
+function DPS.onGMCPCharItemsAdd()
+  local item = gmcpTable("Char.Items.Add")
+  if type(item) == "table" and item.id and item.name then
+    DPS.entitiesById[tostring(item.id)] = item.name
+  end
+end
+
+function DPS.onGMCPCharItemsUpdate()
+  local item = gmcpTable("Char.Items.Update")
+  if type(item) == "table" and item.id and item.name then
+    DPS.entitiesById[tostring(item.id)] = item.name
+  end
+end
+
+function DPS.onGMCPCharItemsRemove()
+  local item = gmcpTable("Char.Items.Remove")
+  if type(item) == "table" and item.id then
+    DPS.entitiesById[tostring(item.id)] = nil
+  end
+end
+
+function DPS.onGMCPTarget()
+  local t = gmcpTable("IRE.Target")
+  if type(t) ~= "table" then return end
+  local info = t.Info
+  local set = t.Set
+  if info == "" or not info then
+    -- cleared: store recent for kill-hit attribution
+    if DPS.currentTarget and DPS.currentTarget.id then
+      DPS.recentClearedTarget.id = DPS.currentTarget.id
+      DPS.recentClearedTarget.name = DPS.currentTarget.name
+      DPS.recentClearedTarget.expires = now() + 2
+    end
+    DPS.currentTarget = { id = nil, name = nil, cleared = true, ts = now() }
+    return
+  end
+  -- info present: update current target
+  local id = (type(info) == "table" and info.id) or set or nil
+  id = id and tostring(id) or nil
+  local name = id and DPS.entitiesById[id] or nil
+  DPS.currentTarget = { id = id, name = name, cleared = false, ts = now() }
+end
+
+function DPS.resolveTargetNameSnapshot()
+  if DPS.currentTarget and (not DPS.currentTarget.cleared) then
+    local name = DPS.currentTarget.name
+    if (not name) and DPS.currentTarget.id then
+      name = DPS.entitiesById[tostring(DPS.currentTarget.id)]
+    end
+    if name then return name end
+  end
+  if DPS.recentClearedTarget and DPS.recentClearedTarget.expires > now() then
+    local name = DPS.recentClearedTarget.name
+    if (not name) and DPS.recentClearedTarget.id then
+      name = DPS.entitiesById[tostring(DPS.recentClearedTarget.id)]
+    end
+    if name then return name end
+  end
+  return nil
+end
+
+-- legacy report/compare removed: focus on per-enemy local reporting
 
 function DPS.flagCrit(t)
   DPS.nextCritType = t
 end
 
 
-function DPS.renameStrategy(oldName, newName)
-  if not oldName or not newName or oldName == "" or newName == "" then
-    cecho("<yellow>DPS: Usage: dps rename <old> <new>\n")
-    return
-  end
-  if not DPS.strategies[oldName] then
-    cecho(string.format("<yellow>DPS: No data for '%s'.\n", tostring(oldName)))
-    return
-  end
-  if DPS.strategies[newName] then
-    cecho(string.format("<yellow>DPS: '%s' already exists.\n", tostring(newName)))
-    return
-  end
-  DPS.strategies[newName] = DPS.strategies[oldName]
-  DPS.strategies[oldName] = nil
-  if DPS.current and DPS.current.name == oldName then
-    DPS.current.name = newName
-  end
-  cecho(string.format("<green>DPS: Renamed '%s' -> '%s'.\n", oldName, newName))
-  DPS.save()
-end
-
-function DPS.removeStrategy(name)
-  if not name or name == "" then
-    cecho("<yellow>DPS: Usage: dps delete <name>\n")
-    return
-  end
-  if not DPS.strategies[name] then
-    cecho(string.format("<yellow>DPS: No data for '%s'.\n", tostring(name)))
-    return
-  end
-  if DPS.current and DPS.current.name == name then
-    cecho("<yellow>DPS: Stop the active session before deleting this strategy.\n")
-    return
-  end
-  DPS.strategies[name] = nil
-  cecho(string.format("<green>DPS: Deleted strategy '%s'.\n", name))
-  DPS.save()
-end
+-- legacy rename/remove removed
 
 -- Auto start/stop helpers
 function DPS.autoStop(reason)
@@ -264,6 +539,7 @@ function DPS.setLabel(name)
   end
 end
 
+
 function DPS.isAttacking()
   local ok, val = pcall(function()
     return keneanung and keneanung.bashing and keneanung.bashing.attacking
@@ -280,6 +556,10 @@ function DPS.onRegain(kind)
       DPS.current.activeTime = (DPS.current.activeTime or 0) + (now() - DPS.current.activeStart)
       DPS.current.activeStart = nil
     end
+    if DPS.current.seg and DPS.current.seg.activeStart then
+      DPS.current.seg.activeTime = (DPS.current.seg.activeTime or 0) + (now() - DPS.current.seg.activeStart)
+      DPS.current.seg.activeStart = nil
+    end
   end
 end
 
@@ -288,9 +568,10 @@ function DPS.save()
   local file, dir = dataFile()
   ensureDir(dir)
   local payload = {
-    version = 1,
-    strategies = DPS.strategies or {},
+    version = 3,
     strategyLabel = DPS.strategyLabel or "auto",
+    enemies = DPS.enemies or {},
+    lastNSessions = DPS.lastNSessions or 10,
   }
   local body = json_encode(payload)
   if not body then return end
@@ -310,14 +591,9 @@ function DPS.load()
   fh:close()
   local data = content and json_decode(content) or nil
   if type(data) == "table" then
-    if type(data.strategies) == "table" then 
-      DPS.strategies = data.strategies 
-      -- clean up legacy sessions arrays if present
-      for _, strat in pairs(DPS.strategies) do
-        if strat.sessions then strat.sessions = nil end
-      end
-    end
     if type(data.strategyLabel) == "string" then DPS.strategyLabel = data.strategyLabel end
+    if type(data.enemies) == "table" then DPS.enemies = data.enemies end
+    if type(data.lastNSessions) == "number" then DPS.lastNSessions = data.lastNSessions end
   end
 end
 

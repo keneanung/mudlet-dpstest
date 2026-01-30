@@ -1,2 +1,2 @@
 local name = matches[2]
-DPS.report(name)
+DPS.localReport(name)

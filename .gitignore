@@ -2,3 +2,6 @@
 *.mpackage
 *.output
 build/
+luacov.*
+.vscode/
+@PKGNAME@/
