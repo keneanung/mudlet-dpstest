@@ -295,10 +295,16 @@ function DPS._enemyStrategyStats(enemy, stratName)
 end
 
 function DPS.localReport(enemyName)
-  local enemy = enemyName or (DPS.current and DPS.current.enemyName) or "unknown"
+  local enemy
+  if enemyName and enemyName ~= "" then
+    -- resolve exact or substring match
+    enemy = DPS.resolveEnemyName and DPS.resolveEnemyName(enemyName) or enemyName
+  else
+    enemy = (DPS.current and DPS.current.enemyName) or "unknown"
+  end
   local e = DPS.enemies[enemy]
   if not e or not e.strategies then
-    cecho(string.format("<yellow>DPS: No local data for '%s'.\n", enemy))
+    cecho(string.format("<yellow>DPS: No local data for '%s'.\n", enemyName or enemy))
     return {}
   end
   cecho(string.format("<cyan>DPS Local: '%s'\n", enemy))
@@ -344,6 +350,33 @@ function DPS.localReport(enemyName)
     printTypesRawDps("totals types (raw dps)", it.totalsTypeRawDamage, it.totalsTime)
   end
   return list
+end
+
+-- Resolve an enemy name from user input supporting case-insensitive substring search.
+-- Returns the exact name if found, the single substring match if unique,
+-- or nil and prints an ambiguity/no-match message.
+function DPS.resolveEnemyName(input)
+  if not input or input == "" then return (DPS.current and DPS.current.enemyName) or "unknown" end
+  local enemies = DPS.enemies or {}
+  -- exact match first
+  if enemies[input] then return input end
+  local q = string.lower(tostring(input))
+  local matches = {}
+  for name, _ in pairs(enemies) do
+    if string.find(string.lower(name), q, 1, true) then
+      table.insert(matches, name)
+    end
+  end
+  table.sort(matches)
+  if #matches == 1 then
+    return matches[1]
+  elseif #matches > 1 then
+    cecho(string.format("<yellow>DPS: Ambiguous enemy '%s'. Matches: %s\n", input, table.concat(matches, ", ")))
+    return nil
+  else
+    cecho(string.format("<yellow>DPS: No enemy matching '%s'.\n", input))
+    return nil
+  end
 end
 
 -- List all enemies with recorded local data
