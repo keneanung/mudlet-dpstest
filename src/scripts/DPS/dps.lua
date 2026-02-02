@@ -447,6 +447,131 @@ function DPS.resetLocal(enemyName, stratName)
   DPS.save()
 end
 
+-- Internal helpers for merging data structures
+local function _addTypeTable(dst, src)
+  if not src then return end
+  for k, v in pairs(src) do
+    dst[k] = (dst[k] or 0) + (v or 0)
+  end
+end
+
+local function _rollIntoTotals(totals, entry)
+  totals.damage = (totals.damage or 0) + (entry.damage or 0)
+  totals.rawDamage = (totals.rawDamage or 0) + (entry.rawDamage or (entry.damage or 0))
+  totals.time = (totals.time or 0) + (entry.time or 0)
+  totals.hits = (totals.hits or 0) + (entry.hits or 0)
+  totals.critHits = (totals.critHits or 0) + (entry.critHits or 0)
+  totals.typeDamage = totals.typeDamage or {}
+  totals.typeRawDamage = totals.typeRawDamage or {}
+  _addTypeTable(totals.typeDamage, entry.typeDamage or {})
+  _addTypeTable(totals.typeRawDamage, entry.typeRawDamage or {})
+end
+
+local function _normalizeRecentForStrategy(strategyData, N)
+  local recent = strategyData.recent or {}
+  strategyData.totals = strategyData.totals or { damage = 0, rawDamage = 0, time = 0, hits = 0, critHits = 0, typeDamage = {}, typeRawDamage = {} }
+  while #recent > N do
+    local old = table.remove(recent, 1)
+    _rollIntoTotals(strategyData.totals, old)
+  end
+end
+
+local function _mergeStrategies(dstS, srcS, N)
+  dstS.totals = dstS.totals or { damage = 0, rawDamage = 0, time = 0, hits = 0, critHits = 0, typeDamage = {}, typeRawDamage = {} }
+  srcS.totals = srcS.totals or { damage = 0, rawDamage = 0, time = 0, hits = 0, critHits = 0, typeDamage = {}, typeRawDamage = {} }
+
+  -- merge totals
+  dstS.totals.damage = (dstS.totals.damage or 0) + (srcS.totals.damage or 0)
+  dstS.totals.rawDamage = (dstS.totals.rawDamage or 0) + (srcS.totals.rawDamage or 0)
+  dstS.totals.time = (dstS.totals.time or 0) + (srcS.totals.time or 0)
+  dstS.totals.hits = (dstS.totals.hits or 0) + (srcS.totals.hits or 0)
+  dstS.totals.critHits = (dstS.totals.critHits or 0) + (srcS.totals.critHits or 0)
+  dstS.totals.typeDamage = dstS.totals.typeDamage or {}
+  dstS.totals.typeRawDamage = dstS.totals.typeRawDamage or {}
+  _addTypeTable(dstS.totals.typeDamage, srcS.totals.typeDamage or {})
+  _addTypeTable(dstS.totals.typeRawDamage, srcS.totals.typeRawDamage or {})
+
+  -- concat recents
+  dstS.recent = dstS.recent or {}
+  srcS.recent = srcS.recent or {}
+  for _, r in ipairs(srcS.recent) do table.insert(dstS.recent, r) end
+
+  -- normalize to last-N and roll overflow into totals
+  _normalizeRecentForStrategy(dstS, N)
+end
+
+-- Merge enemy data from 'fromName' into 'toName', keeping 'toName' and removing 'fromName'.
+-- Returns true on success.
+function DPS.mergeEnemies(fromName, toName)
+  if not fromName or not toName or fromName == toName then
+    cecho("<yellow>DPS: Provide distinct source and target names.\n")
+    return false
+  end
+  local enemies = DPS.enemies or {}
+  local srcKey = DPS.resolveEnemyName and DPS.resolveEnemyName(fromName) or fromName
+  if not srcKey or not enemies[srcKey] then
+    cecho(string.format("<yellow>DPS: Source enemy '%s' not found.\n", fromName))
+    return false
+  end
+  local dstKey = enemies[toName] and toName or (DPS.resolveEnemyName and DPS.resolveEnemyName(toName) or nil)
+  if not dstKey then
+    cecho(string.format("<yellow>DPS: Target enemy '%s' not found. Use rename to create a new name.\n", toName))
+    return false
+  end
+  if not enemies[dstKey] then
+    cecho(string.format("<yellow>DPS: Target enemy '%s' not found.\n", toName))
+    return false
+  end
+  if srcKey == dstKey then
+    cecho("<yellow>DPS: Source and target resolve to the same enemy.\n")
+    return false
+  end
+
+  local N = DPS.lastNSessions or 10
+  local dst = enemies[dstKey]
+  local src = enemies[srcKey]
+  dst.strategies = dst.strategies or {}
+  src.strategies = src.strategies or {}
+  for strat, sdata in pairs(src.strategies) do
+    if not dst.strategies[strat] then
+      -- shallow copy src strategy data
+      dst.strategies[strat] = { totals = { damage = 0, rawDamage = 0, time = 0, hits = 0, critHits = 0, typeDamage = {}, typeRawDamage = {} }, recent = {} }
+      _mergeStrategies(dst.strategies[strat], sdata, N)
+    else
+      _mergeStrategies(dst.strategies[strat], sdata, N)
+    end
+  end
+  enemies[srcKey] = nil
+  cecho(string.format("<green>DPS: Merged '%s' into '%s'.\n", srcKey, dstKey))
+  DPS.save()
+  return true
+end
+
+-- Rename 'fromName' to 'toName'. If 'toName' exists, merges into it.
+function DPS.renameEnemy(fromName, toName)
+  if not fromName or not toName or fromName == toName then
+    cecho("<yellow>DPS: Provide distinct source and target names.\n")
+    return false
+  end
+  local enemies = DPS.enemies or {}
+  local srcKey = DPS.resolveEnemyName and DPS.resolveEnemyName(fromName) or fromName
+  if not srcKey or not enemies[srcKey] then
+    cecho(string.format("<yellow>DPS: Enemy '%s' not found.\n", fromName))
+    return false
+  end
+  -- If destination exists (exact), merge instead of raw rename. Do not substring-resolve target to allow creating new names like 'Gob'.
+  local dstKey = enemies[toName] and toName or nil
+  if dstKey then
+    return DPS.mergeEnemies(srcKey, dstKey)
+  end
+  -- Create new entry with the new name
+  enemies[toName] = enemies[srcKey]
+  enemies[srcKey] = nil
+  cecho(string.format("<green>DPS: Renamed '%s' to '%s'.\n", srcKey, toName))
+  DPS.save()
+  return true
+end
+
 function DPS.setLastN(n)
   local v = tonumber(n)
   if v and v > 0 then

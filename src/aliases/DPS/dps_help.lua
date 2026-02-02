@@ -11,6 +11,8 @@ cecho("<white>  dps enemies               List enemies with recorded local data\
 cecho("<white>  dps overview [strat]      Compare enemies by DPS for strategy [strat]\n")
 cecho("<white>  dps reset [enemy] [strat] Reset local data (enemy or enemy+strategy)\n")
 cecho("<white>  dps setlastn <N>          Set recent sessions buffer size (default 10)\n")
+cecho("<white>  dps rename <from> -> <to> Rename enemy; merges if <to> exists\n")
+cecho("<white>  dps merge <from> -> <to>  Merge <from> into existing <to>\n")
 cecho("<white>Notes:\n")
 cecho("<white>  - Tracks crits and computes raw DPS (crit multipliers removed).\n")
 cecho("<white>  - Tallies damage by type when seen (e.g., psychic, fire).\n")
