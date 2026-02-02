@@ -6,8 +6,8 @@ describe("GMCP handlers and helpers", function()
     reload_dps({ noSaveStub = true })
   end)
 
-  it("updates entities mapping from Char.Items.* events", function()
-    _G.gmcp = { Char = { Items = { List = { items = { { id = 1, name = "Goblin" }, { id = 2, name = "Orc" } } }, Add = { id = 3, name = "Elf" }, Update = { id = 2, name = "Orc2" }, Remove = { id = 1 } } } }
+  it("updates entities mapping from Char.Items.* events (room only)", function()
+    _G.gmcp = { Char = { Items = { List = { location = "room", items = { { id = 1, name = "Goblin" }, { id = 2, name = "Orc" } } }, Add = { location = "room", item = { id = 3, name = "Elf" } }, Update = { location = "room", item = { id = 2, name = "Orc2" } }, Remove = { location = "room", item = { id = 1 } } } } }
     DPS.onGMCPCharItemsList()
     assert.are.equal("Goblin", DPS.entitiesById["1"]) 
     assert.are.equal("Orc", DPS.entitiesById["2"]) 

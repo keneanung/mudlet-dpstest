@@ -439,28 +439,37 @@ end
 function DPS.onGMCPCharItemsList()
   local data = gmcpTable("Char.Items.List")
   if type(data) ~= "table" or type(data.items) ~= "table" then return end
+  if data.location ~= "room" then return end
   DPS.entitiesById = {}
   for _, item in ipairs(data.items) do
-    if item.id and item.name then DPS.entitiesById[tostring(item.id)] = item.name end
+    if item.id and item.name then
+      DPS.entitiesById[tostring(item.id)] = item.name
+    end
   end
 end
 
 function DPS.onGMCPCharItemsAdd()
-  local item = gmcpTable("Char.Items.Add")
+  local data = gmcpTable("Char.Items.Add")
+  if type(data) ~= "table" or data.location ~= "room" then return end
+  local item = data.item
   if type(item) == "table" and item.id and item.name then
     DPS.entitiesById[tostring(item.id)] = item.name
   end
 end
 
 function DPS.onGMCPCharItemsUpdate()
-  local item = gmcpTable("Char.Items.Update")
+  local data = gmcpTable("Char.Items.Update")
+  if type(data) ~= "table" or data.location ~= "room" then return end
+  local item = data.item
   if type(item) == "table" and item.id and item.name then
     DPS.entitiesById[tostring(item.id)] = item.name
   end
 end
 
 function DPS.onGMCPCharItemsRemove()
-  local item = gmcpTable("Char.Items.Remove")
+  local data = gmcpTable("Char.Items.Remove")
+  if type(data) ~= "table" or data.location ~= "room" then return end
+  local item = data.item
   if type(item) == "table" and item.id then
     DPS.entitiesById[tostring(item.id)] = nil
   end

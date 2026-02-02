@@ -8,7 +8,7 @@ describe("Per-target segmentation", function()
 
   it("records separate enemies when target changes mid-session", function()
     -- seed entity name mapping via Char.Items.List
-    _G.gmcp = { Char = { Items = { List = { items = { { id = 1, name = "Spectre" }, { id = 2, name = "Millipede" } } } } } }
+    _G.gmcp = { Char = { Items = { List = { location = "room", items = { { id = 1, name = "Spectre" }, { id = 2, name = "Millipede" } } } } } }
     DPS.onGMCPCharItemsList()
 
     DPS.start("StratZ")
