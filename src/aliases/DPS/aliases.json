@@ -10,6 +10,7 @@
   { "name": "dps reset", "isActive": "yes", "regex": "^dps\\s+reset(?:\\s+(.*?))(?:\\s+(.*))?$", "script": "" },
   { "name": "dps setlastn", "isActive": "yes", "regex": "^dps\\s+setlastn\\s+(\\d+)$", "script": "" },
   { "name": "dps setname", "isActive": "yes", "regex": "^dps\\s+setname\\s+(\\w+)$", "script": "" },
+  { "name": "dps status", "isActive": "yes", "regex": "^dps\\s+status$", "script": "" },
   { "name": "dps rename", "isActive": "yes", "regex": "^dps\\s+rename\\s+(.+?)\\s*->\\s*(.+)$", "script": "" },
   { "name": "dps merge", "isActive": "yes", "regex": "^dps\\s+merge\\s+(.+?)\\s*->\\s*(.+)$", "script": "" }
 ]

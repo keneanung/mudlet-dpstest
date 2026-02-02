@@ -1,0 +1,46 @@
+require("spec/spec_helper")
+
+describe("Current session status", function()
+  before_each(function()
+    set_time(0)
+    reload_dps({ noSaveStub = true })
+  end)
+
+  it("returns live DPS metrics without stopping", function()
+    DPS.start("StratA")
+    DPS.current.enemyName = "Orc"
+    advance_time(10)
+    DPS.addDamage(100)
+
+    local s = DPS.status()
+    assert.is_truthy(s)
+    assert.are.equal("StratA", s.name)
+    assert.are.equal("Orc", s.enemyName)
+    assert.are.equal(10, s.duration)
+    assert.are.equal(100, s.damage)
+    assert.are.equal(10, s.dps)
+    assert.are.equal(10, s.rawDps)
+  end)
+
+  it("updates as time and damage progress", function()
+    DPS.start("StratB")
+    DPS.current.enemyName = "Goblin"
+    advance_time(5)
+    DPS.addDamage(50)
+    local s1 = DPS.status()
+    assert.are.equal(5, s1.duration)
+    assert.are.equal(10, s1.dps)
+
+    advance_time(5)
+    DPS.addDamage(50)
+    local s2 = DPS.status()
+    assert.are.equal(10, s2.duration)
+    assert.are.equal(10, s2.dps)
+    assert.are.equal(100, s2.damage)
+  end)
+
+  it("returns nil when no active session", function()
+    local s = DPS.status()
+    assert.is_nil(s)
+  end)
+end)

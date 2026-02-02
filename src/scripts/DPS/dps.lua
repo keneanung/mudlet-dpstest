@@ -133,6 +133,63 @@ function DPS.stop()
   DPS.save()
 end
 
+-- Show current session DPS without stopping
+function DPS.status()
+  local cur = DPS.current
+  if not cur then
+    cecho("<yellow>DPS: No active session.\n")
+    return nil
+  end
+  local duration = cur.activeTime + (cur.activeStart and (now() - cur.activeStart) or 0)
+  duration = math.max(0, math.floor(duration))
+  local dps = duration > 0 and ((cur.damage or 0) / duration) or 0
+  local rawdps = duration > 0 and ((cur.rawDamage or 0) / duration) or 0
+
+  cecho(string.format("<cyan>DPS status: '%s' %ds, %d dmg (%d raw), %d hits (%d crits), %.1f dps / %.1f raw dps%s\n",
+    cur.name,
+    duration,
+    cur.damage or 0,
+    cur.rawDamage or 0,
+    cur.hits or 0,
+    cur.critHits or 0,
+    dps,
+    rawdps,
+    cur.enemyName and (", enemy: " .. tostring(cur.enemyName)) or ""))
+
+  -- also compute current segment if present
+  local seg = cur.seg
+  local segInfo
+  if seg then
+    local sdur = seg.activeTime + (seg.activeStart and (now() - seg.activeStart) or 0)
+    sdur = math.max(0, math.floor(sdur))
+    local sdps = sdur > 0 and ((seg.damage or 0) / sdur) or 0
+    local sraw = sdur > 0 and ((seg.rawDamage or 0) / sdur) or 0
+    segInfo = {
+      enemyName = seg.enemyName,
+      duration = sdur,
+      damage = seg.damage or 0,
+      rawDamage = seg.rawDamage or 0,
+      hits = seg.hits or 0,
+      critHits = seg.critHits or 0,
+      dps = sdps,
+      rawDps = sraw,
+    }
+  end
+
+  return {
+    name = cur.name,
+    enemyName = cur.enemyName,
+    duration = duration,
+    damage = cur.damage or 0,
+    rawDamage = cur.rawDamage or 0,
+    hits = cur.hits or 0,
+    critHits = cur.critHits or 0,
+    dps = dps,
+    rawDps = rawdps,
+    segment = segInfo,
+  }
+end
+
 function DPS.addDamage(amount, dtype)
   if not DPS.current then return end
   local a = tonumber(amount) or 0
