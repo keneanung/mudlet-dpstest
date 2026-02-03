@@ -31,7 +31,7 @@
     "isActive": "yes",
     "isFolder": "no",
     "patterns": [
-      { "pattern": "^You have recovered balance on all limbs\\.\\[Bal\\]", "type": "regex" }
+      { "pattern": "^You have recovered balance on all limbs\\.$", "type": "regex" }
     ],
     "script": ""
   },
@@ -40,7 +40,7 @@
     "isActive": "yes",
     "isFolder": "no",
     "patterns": [
-      { "pattern": "^You have recovered equilibrium\\.\\[Eq\\]", "type": "regex" }
+      { "pattern": "^You have recovered equilibrium\\.$", "type": "regex" }
     ],
     "script": ""
   }
