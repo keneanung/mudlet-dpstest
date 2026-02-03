@@ -1,6 +1,6 @@
 {
   "package": "dpstest",
-  "title": "Mudlet DPS Tracker",
+  "title": "A DPS tracker of attack strategies for Achaea",
   "version": "0.2.0",
   "author": "keneanung",
   "outputFile": true

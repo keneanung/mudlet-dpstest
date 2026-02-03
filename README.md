@@ -1,6 +1,6 @@
 # Mudlet DPS Tracker
 
-Class-agnostic DPS tracker for Mudlet, built with Muddler. It parses damage lines, tracks critical hits, computes raw DPS (crit multipliers factored out), tallies damage by type, compares strategies, and persists sessions across restarts.
+Class-agnostic DPS tracker for Mudlet for the MUD Achaea, built with Muddler. It parses damage lines, tracks critical hits, computes raw DPS (crit multipliers factored out), tallies damage by type, compares strategies, and persists sessions across restarts.
 
 ## Structure
 
