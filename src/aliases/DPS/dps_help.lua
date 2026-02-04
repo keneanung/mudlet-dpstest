@@ -10,7 +10,7 @@ cecho("<white>  dps local [enemy]         Local leaderboard for current/specifie
 cecho("<white>  dps enemy <enemy>         Local leaderboard for the given enemy name\n")
 cecho("<white>  dps enemies               List enemies with recorded local data\n")
 cecho("<white>  dps overview [strat]      Compare enemies by DPS for strategy [strat]\n")
-cecho("<white>  dps reset [enemy] [strat] Reset local data (enemy or enemy+strategy)\n")
+cecho("<white>  dps reset <enemy> [:: <strat>] Reset local data (enemy or enemy+strategy)\n")
 cecho("<white>  dps setlastn <N>          Set recent sessions buffer size (default 10)\n")
 cecho("<white>  dps rename <from> -> <to> Rename enemy; merges if <to> exists\n")
 cecho("<white>  dps merge <from> -> <to>  Merge <from> into existing <to>\n")
